@@ -169,98 +169,20 @@ function categoryBadge(string $cat): string {
     };
 }
 
-require_once __DIR__ . '/layout.php';
+// ═══════════════════════════════════════════════════════════
+// LAYOUT : titre de page + assets spécifiques au dashboard
+// ═══════════════════════════════════════════════════════════
+$pageTitle = 'Tableau de bord';
+$pageIcon  = 'bi-grid-1x2-fill';
 
-if (ob_get_level() > 0) { ob_end_flush(); }
-?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard — AFRINEX Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-    <link href="https://cdn.jsdelivr.net/npm/summernote@0.8.20/dist/summernote-lite.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+// CSS/JS propres à cette page (Chart.js, Summernote), injectés par layout.php avant </head>
+$extraHead = <<<HTML
+<link href="https://cdn.jsdelivr.net/npm/summernote@0.8.20/dist/summernote-lite.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+HTML;
 
-    <style>
-        /* ═══════════════ VARIABLES ═══════════════ */
-        :root {
-            --sidebar-bg : #0d1117;
-            --main-bg    : #f6f8fa;
-            --gold       : #d4a017;
-            --navy       : #1A253A;
-            --sidebar-w  : 240px;
-        }
-
-        /* ═══════════════ BASE ═══════════════ */
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Inter', sans-serif;
-            background: var(--main-bg);
-            margin: 0;
-        }
-
-        /* ═══════════════ LAYOUT ═══════════════ */
-        .admin-layout {
-            display: flex;
-            min-height: 100vh;
-        }
-
-        /* ── Sidebar ── */
-        .admin-sidebar {
-            width: var(--sidebar-w);
-            flex-shrink: 0;
-            background: var(--sidebar-bg);
-            color: #fff;
-            padding: 1.25rem 1rem;
-            display: flex;
-            flex-direction: column;
-            position: sticky;
-            top: 0;
-            height: 100vh;
-            overflow-y: auto;
-            transition: transform 0.3s ease;
-            z-index: 1000;
-        }
-        @media (max-width: 768px) {
-            .admin-sidebar {
-                position: fixed;
-                top: 0;
-                left: 0;
-                transform: translateX(-100%);
-                width: 260px;
-                height: 100vh;
-                box-shadow: 2px 0 20px rgba(0,0,0,0.3);
-            }
-            .admin-sidebar.open {
-                transform: translateX(0);
-            }
-            .sidebar-overlay {
-                display: none;
-                position: fixed;
-                inset: 0;
-                background: rgba(0,0,0,0.4);
-                z-index: 999;
-            }
-            .sidebar-overlay.active {
-                display: block;
-            }
-        }
-
-        /* ── Main ── */
-        .admin-main {
-            flex: 1;
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-        }
-        .admin-content {
-            padding: 1.5rem;
-            flex: 1;
-        }
-
+// Styles propres au dashboard (le socle sidebar/navbar/layout est déjà géré par layout.php)
+$extraStyles = <<<CSS
         /* ═══════════════ STAT CARDS ═══════════════ */
         .stat-card {
             background: #fff;
@@ -363,28 +285,15 @@ if (ob_get_level() > 0) { ob_end_flush(); }
         .video-embed iframe,   .video-embed video {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;
         }
-    </style>
-</head>
-<body>
-<div class="admin-layout">
+CSS;
 
-    <!-- SIDEBAR OVERLAY (mobile) -->
-    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+// layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
+//   <aside>...sidebar...</aside><div class="admin-main"><nav>...navbar...</nav>
+//   <div class="admin-content">   ← reste ouvert, on continue le contenu ici
+require_once __DIR__ . '/layout.php';
 
-    <!-- ═══════════════ SIDEBAR ═══════════════ -->
-    <aside class="admin-sidebar" id="adminSidebar">
-        <?php renderSidebar(); ?>
-    </aside>
-
-    <!-- ═══════════════ MAIN ═══════════════ -->
-    <div class="admin-main">
-
-        <!-- NAVBAR UNIFIÉE -->
-        <?php renderNavbar('Tableau de bord', 'bi-grid-1x2-fill'); ?>
-
-        <!-- CONTENU PRINCIPAL -->
-        <div class="admin-content">
-
+if (ob_get_level() > 0) { ob_end_flush(); }
+?>
             <!-- Alerte succès -->
             <?php if ($success): ?>
             <div class="alert alert-success alert-dismissible fade show mb-3">

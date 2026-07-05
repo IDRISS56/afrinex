@@ -15,15 +15,10 @@ function isLoggedIn(): bool {
  * Redirige vers index.php si non connecté.
  * Si les headers sont déjà envoyés (HTML déjà produit),
  * utilise un fallback JS pour éviter le warning.
- * 
- * Cause réelle : appeler requireAuth() APRÈS un include qui génère du HTML.
- * Solution structurelle : toujours appeler requireAuth() en TOUT DÉBUT de fichier,
- * avant tout include de layout ou affichage.
  */
 function requireAuth(): void {
     if (!isLoggedIn()) {
         if (headers_sent()) {
-            // Fallback JS si du HTML a déjà été envoyé
             echo '<script>window.location.replace("accueil");</script>';
         } else {
             header('Location: accueil');
@@ -36,19 +31,24 @@ function isAdmin(): bool {
     return isLoggedIn() && ($_SESSION['user_role'] ?? '') === 'admin';
 }
 
+function isEditor(): bool {
+    return isLoggedIn() && in_array($_SESSION['user_role'] ?? '', ['admin', 'editor']);
+}
+
 function login(string $email, string $password): bool {
     $db   = Database::getInstance();
-    $user = $db->fetchOne("SELECT * FROM users WHERE email = ?", [$email]);
+    $user = $db->fetchOne("SELECT * FROM users WHERE email = ? AND is_active = 1", [$email]);
 
     if (!$user) return false;
 
     if (password_verify($password, $user['password'])) {
         session_regenerate_id(true);
 
-        $_SESSION['user_id']    = $user['id'];
-        $_SESSION['user_name']  = $user['name'];
-        $_SESSION['user_role']  = $user['role'];
-        $_SESSION['user_email'] = $user['email'];
+        $_SESSION['user_id']      = (int)$user['id'];
+        $_SESSION['user_name']    = $user['username'];
+        $_SESSION['user_role']    = $user['role'];
+        $_SESSION['user_email']   = $user['email'];
+        $_SESSION['user_avatar']  = $user['avatar'];
         return true;
     }
     return false;

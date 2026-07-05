@@ -3,10 +3,10 @@
 //  Front-office - Page d'accueil (VERSION DYNAMIQUE)
 //  Étude de cas + Newsletter intégrées avant la section contact
 // ============================================================
-$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-$host = $_SERVER['HTTP_HOST'];
-$uri = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
-$base_url = $protocol . $host . $uri;
+// $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
+// $host = $_SERVER['HTTP_HOST'];
+// $uri = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
+// $base_url = $protocol . $host . $uri;
 
 // --- Configuration AJAX ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {

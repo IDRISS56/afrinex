@@ -185,92 +185,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_case'])) {
     }
 }
 
-require_once __DIR__ . '/layout.php';
-
+// ═══════════════════════════════════════════════════════════
+// LAYOUT : titre de page + assets spécifiques à Études de cas
+// ═══════════════════════════════════════════════════════════
 $unreadCount = (int)($db->fetchOne(
     "SELECT COUNT(*) as count FROM contacts WHERE is_read = 0 AND type = 'message'"
 )['count'] ?? 0);
 
-if (ob_get_level() > 0) { ob_end_flush(); }
-?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Études de cas - AFRINEX Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link href="https://cdn.jsdelivr.net/npm/summernote@0.8.20/dist/summernote-lite.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --sidebar-bg: #0d1117;
-            --main-bg: #f6f8fa;
-            --gold: #d4a017;
-        }
-        body { font-family: 'Inter', sans-serif; background: var(--main-bg); margin: 0; }
+$pageTitle = 'Études de cas';
+$pageIcon  = 'bi-briefcase';
 
-        /* ── Layout (identique au dashboard) ── */
-        .admin-layout { display: flex; min-height: 100vh; }
+// CSS/JS propres à cette page (Summernote), injectés par layout.php avant </head>
+$extraHead = <<<HTML
+<link href="https://cdn.jsdelivr.net/npm/summernote@0.8.20/dist/summernote-lite.min.css" rel="stylesheet">
+HTML;
 
-        .admin-sidebar {
-            width: 240px;
-            flex-shrink: 0;
-            background: var(--sidebar-bg);
-            color: #fff;
-            padding: 1.25rem 1rem;
-            display: flex;
-            flex-direction: column;
-            position: sticky;
-            top: 0;
-            height: 100vh;
-            overflow-y: auto;
-            transition: transform 0.3s ease;
-            z-index: 1000;
-        }
-        @media (max-width: 768px) {
-            .admin-sidebar {
-                position: fixed;
-                top: 0; left: 0;
-                transform: translateX(-100%);
-                width: 260px;
-                box-shadow: 2px 0 20px rgba(0,0,0,.3);
-            }
-            .admin-sidebar.open { transform: translateX(0); }
-            .sidebar-overlay {
-                display: none;
-                position: fixed; inset: 0;
-                background: rgba(0,0,0,.4);
-                z-index: 999;
-            }
-            .sidebar-overlay.active { display: block; }
-        }
-
-        .admin-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-        /* ── Navbar unifiée via renderNavbar() ── */
-        .admin-navbar {
-            background: #fff;
-            border-bottom: 1px solid #e1e4e8;
-            padding: 0.75rem 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            flex-wrap: wrap;
-            position: sticky;
-            top: 0;
-            z-index: 1010;
-        }
-        .navbar-toggle {
-            background: none; border: none;
-            font-size: 1.5rem; color: #1A253A;
-            cursor: pointer; padding: 0 .5rem;
-        }
-        @media (min-width: 769px) { .navbar-toggle { display: none; } }
-        .navbar-brand { font-weight: 700; font-size: 1.1rem; color: #1A253A; text-decoration: none; }
-        .navbar-actions { margin-left: auto; display: flex; align-items: center; gap: 1rem; }
-
-        .content-area { padding: 1.5rem; flex: 1; }
+// Styles propres à Études de cas (le socle sidebar/navbar/layout est déjà géré par layout.php)
+$extraStyles = <<<CSS
         .table-card {
             background: white;
             border-radius: 12px;
@@ -305,24 +236,15 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             font-size: 0.75rem;
             padding: 0.35em 0.65em;
         }
-    </style>
-</head>
-<body>
-<div class="admin-layout">
+CSS;
 
-    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+// layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
+//   <aside>...sidebar...</aside><div class="admin-main"><nav>...navbar...</nav>
+//   <div class="admin-content">   ← reste ouvert, on continue le contenu ici
+require_once __DIR__ . '/layout.php';
 
-    <!-- Sidebar (identique au dashboard) -->
-    <aside class="admin-sidebar" id="adminSidebar">
-        <?php renderSidebar(); ?>
-    </aside>
-
-    <div class="admin-main">
-
-        <!-- Navbar unifiée -->
-        <?php renderNavbar('Études de cas', 'bi-briefcase'); ?>
-
-        <div class="content-area">
+if (ob_get_level() > 0) { ob_end_flush(); }
+?>
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h2 class="mb-0">Études de cas</h2>
                 <button type="button" class="btn btn-gold" id="btnNewCase">
@@ -457,7 +379,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
                 <?php endif; ?>
             </div><!-- /table-card -->
-        </div><!-- /content-area -->
+        </div><!-- /admin-content -->
     </div><!-- /admin-main -->
 </div><!-- /admin-layout -->
 

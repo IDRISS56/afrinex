@@ -178,69 +178,23 @@ unset($_SESSION['flash_success_partner']);
 $successBi = $_SESSION['flash_success_bi'] ?? null;
 unset($_SESSION['flash_success_bi']);
 
-require_once __DIR__ . '/layout.php';
-
+// ═══════════════════════════════════════════════════════════
+// LAYOUT : titre de page + assets spécifiques à Partenaires & BI
+// ═══════════════════════════════════════════════════════════
 $unreadCount = (int)($db->fetchOne(
     "SELECT COUNT(*) as count FROM contacts WHERE is_read = 0 AND type = 'message'"
 )['count'] ?? 0);
 
-if (ob_get_level() > 0) { ob_end_flush(); }
-?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Partenaires & BI - AFRINEX Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    <style>
-        :root {
-            --sidebar-bg: #0d1117;
-            --main-bg: #f6f8fa;
-            --gold: #d4a017;
-        }
-        body { font-family: 'Inter', sans-serif; background: var(--main-bg); margin: 0; }
+$pageTitle = 'Partenaires & BI';
+$pageIcon  = 'bi-building';
 
-        .admin-layout { display: flex; min-height: 100vh; }
+// CSS/JS propres à cette page (FontAwesome pour les icônes des métriques BI), injectés par layout.php avant </head>
+$extraHead = <<<HTML
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+HTML;
 
-        .admin-sidebar {
-            width: 240px;
-            flex-shrink: 0;
-            background: var(--sidebar-bg);
-            color: #fff;
-            padding: 1.25rem 1rem;
-            display: flex;
-            flex-direction: column;
-            position: sticky;
-            top: 0;
-            height: 100vh;
-            overflow-y: auto;
-            transition: transform 0.3s ease;
-            z-index: 1000;
-        }
-        @media (max-width: 768px) {
-            .admin-sidebar {
-                position: fixed;
-                top: 0; left: 0;
-                transform: translateX(-100%);
-                width: 260px;
-                box-shadow: 2px 0 20px rgba(0,0,0,.3);
-            }
-            .admin-sidebar.open { transform: translateX(0); }
-            .sidebar-overlay {
-                display: none;
-                position: fixed; inset: 0;
-                background: rgba(0,0,0,.4);
-                z-index: 999;
-            }
-            .sidebar-overlay.active { display: block; }
-        }
-
-        .admin-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-        .content-area { padding: 1.5rem; flex: 1; }
+// Styles propres à Partenaires & BI (le socle sidebar/navbar/layout est déjà géré par layout.php)
+$extraStyles = <<<CSS
         .table-card {
             background: white;
             border-radius: 12px;
@@ -273,23 +227,15 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             0%, 100% { transform: scale(1); opacity: 1; }
             50% { transform: scale(1.1); opacity: 0.8; }
         }
-    </style>
-</head>
-<body>
-<div class="admin-layout">
+CSS;
 
-    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+// layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
+//   <aside>...sidebar...</aside><div class="admin-main"><nav>...navbar...</nav>
+//   <div class="admin-content">   ← reste ouvert, on continue le contenu ici
+require_once __DIR__ . '/layout.php';
 
-    <aside class="admin-sidebar" id="adminSidebar">
-        <?php renderSidebar(); ?>
-    </aside>
-
-    <div class="admin-main">
-
-        <!-- Navbar unifiée -->
-        <?php renderNavbar('Partenaires & BI', 'bi-building'); ?>
-
-        <div class="content-area">
+if (ob_get_level() > 0) { ob_end_flush(); }
+?>
 
             <!-- Onglets -->
             <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
@@ -447,10 +393,10 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
+            </div><!-- /tab-content -->
+        </div><!-- /admin-content -->
+    </div><!-- /admin-main -->
+</div><!-- /admin-layout -->
 
 <!-- ===== MODAL PARTENAIRE ===== -->
 <div class="modal fade" id="partnerModal" tabindex="-1" aria-hidden="true">
