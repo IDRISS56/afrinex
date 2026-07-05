@@ -800,7 +800,7 @@ include $templatePath . 'header.php';
                             </div>
                         </div>
                     </div>
-                    <a href="#" class="d-inline-flex align-items-center gap-3 bg-emerald-20 border border-emerald-30 text-emerald-400 font-display fw-semibold px-4 py-3 rounded-4 text-decoration-none hover-bg-emerald-30 transition-colors"><i class="fab fa-whatsapp fs-4"></i> Discuter sur WhatsApp</a>
+                    <a href="https://wa.me/2250556584954?text=Bonjour,%20je%20souhaite%20avoir%20des%20informations." target="_blank" class="d-inline-flex align-items-center gap-3 bg-emerald-20 border border-emerald-30 text-emerald-400 font-display fw-semibold px-4 py-3 rounded-4 text-decoration-none hover-bg-emerald-30 transition-colors"><i class="fab fa-whatsapp fs-4"></i> Discuter sur WhatsApp</a>
                 </div>
                 <div class="col-lg-6">
                     <div class="glass rounded-4 p-4">
