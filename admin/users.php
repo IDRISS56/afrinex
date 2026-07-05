@@ -13,7 +13,7 @@ requireAuth();
 define('BASE_ROUTE', 'users');
 
 // Seul un administrateur peut gérer les utilisateurs
-if ($_SESSION['user_role'] !== 'admin') {
+if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'isadmin') {
     header('Location: dashboard');
     exit;
 }
@@ -69,6 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_user'])) {
     if (empty($username)) $errors[] = "Le nom d'utilisateur est obligatoire";
     if (empty($email)) $errors[] = "L'email est obligatoire";
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = "Email invalide";
+    // Empêcher l'attribution du rôle isadmin via le formulaire
+    if ($role === 'isadmin') {
+        $errors[] = "Rôle non autorisé";
+        $role = 'author';
+    }
 
     if (!$editId && empty($password)) {
         $errors[] = "Le mot de passe est obligatoire pour un nouvel utilisateur";
@@ -165,7 +170,7 @@ $search = trim($_POST['search'] ?? $_GET['search'] ?? '');
 $roleFilter = trim($_POST['role'] ?? $_GET['role'] ?? '');
 $statusFilter = isset($_POST['is_active']) && $_POST['is_active'] !== '' ? (int)$_POST['is_active'] : (isset($_GET['is_active']) && $_GET['is_active'] !== '' ? (int)$_GET['is_active'] : null);
 
-$where = ["1=1"];
+$where = ["role != 'isadmin'"];
 $params = [];
 
 if ($search) {

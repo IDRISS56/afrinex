@@ -13,7 +13,7 @@ requireAuth();
 define('BASE_ROUTE', 'settings');
 
 // Seul un administrateur peut modifier les paramètres
-if ($_SESSION['user_role'] !== 'admin') {
+if ($_SESSION['user_role'] !== 'isadmin') {
     header('Location: dashboard');
     exit;
 }
