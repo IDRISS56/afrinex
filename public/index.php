@@ -1,13 +1,4 @@
 <?php
-// ============================================================
-//  Front-office - Page d'accueil (VERSION DYNAMIQUE)
-//  Étude de cas + Newsletter intégrées avant la section contact
-// ============================================================
-// $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-// $host = $_SERVER['HTTP_HOST'];
-// $uri = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
-// $base_url = $protocol . $host . $uri;
-
 // --- Configuration AJAX ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
     ini_set('display_errors', 0);
@@ -21,6 +12,11 @@ require_once 'includes/config.php';
 require_once 'includes/db.php';
 require_once 'includes/functions.php';
 
+// ─── PHPMailer ───
+require_once 'phpmailer/src/Exception.php';
+require_once 'phpmailer/src/PHPMailer.php';
+require_once 'phpmailer/src/SMTP.php';
+
 function ajaxResponse($success, $message, $data = null) {
     $response = ['success' => $success, 'message' => $message];
     if ($data !== null) $response['data'] = $data;
@@ -28,6 +24,30 @@ function ajaxResponse($success, $message, $data = null) {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($response);
     exit;
+}
+
+// ─── Envoi d'email de notification ───
+function sendNotificationEmail($subject, $body) {
+    try {
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        $mail->isSMTP();
+        $mail->Host = 'smtp.gmail.com';
+        $mail->SMTPAuth = true;
+        $mail->Username = 'badrissaouattara565@gmail.com';
+        $mail->Password = 'yatw wpsw vvqn tkod';
+        $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port = 587;
+        $mail->setFrom('badrissaouattara565@gmail.com', 'AFRINEX Research');
+        $mail->addAddress('badrissaouattara565@gmail.com');
+        $mail->isHTML(true);
+        $mail->Subject = $subject;
+        $mail->Body = nl2br($body);
+        $mail->send();
+        return true;
+    } catch (Exception $e) {
+        error_log('PHPMailer error: ' . $e->getMessage());
+        return false;
+    }
 }
 
 // --- Maintenance ---
@@ -79,6 +99,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
                 $existing = $db->fetchOne("SELECT id FROM contacts WHERE email = ? AND type = 'subscriber'", [$email]);
                 if ($existing) throw new Exception('Cette adresse est déjà abonnée.');
                 $db->query("INSERT INTO contacts (email, type, name, date) VALUES (?, 'subscriber', ?, NOW())", [$email, $email]);
+                // ─── Envoi email notification ───
+                sendNotificationEmail(
+                    'Nouvel abonnement newsletter — AFRINEX',
+                    "<h3>Nouvel abonnement newsletter</h3><p><strong>Email :</strong> " . htmlspecialchars($email) . "</p><p><strong>Date :</strong> " . date('d/m/Y H:i') . "</p>"
+                );
                 ajaxResponse(true, 'Merci ! Vous êtes maintenant abonné à notre newsletter.');
                 break;
 
@@ -98,6 +123,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
                 }
 
                 $db->query("INSERT INTO contacts (name, firstname, email, company, study_type, message, type, is_read, date) VALUES (?, ?, ?, ?, ?, ?, 'message', 0, NOW())", [$nom, $prenom, $email, $entreprise, $study_type, $message]);
+                // ─── Envoi email notification ───
+                $studyLabels = [
+                    'quantitative' => 'Étude Quantitative',
+                    'qualitative' => 'Étude Qualitative',
+                    'bi' => 'Business Intelligence',
+                    'ml' => 'Machine Learning',
+                    'sectoriel' => 'Étude Sectorielle',
+                    'other' => 'Autre'
+                ];
+                $studyLabel = $studyLabels[$study_type] ?? 'Non spécifié';
+                sendNotificationEmail(
+                    'Nouvelle demande de devis — AFRINEX',
+                    "<h3>Nouvelle demande de devis</h3>"
+                    . "<p><strong>Nom :</strong> " . htmlspecialchars($nom) . " " . htmlspecialchars($prenom) . "</p>"
+                    . "<p><strong>Email :</strong> " . htmlspecialchars($email) . "</p>"
+                    . "<p><strong>Entreprise :</strong> " . htmlspecialchars($entreprise) . "</p>"
+                    . "<p><strong>Type d'étude :</strong> " . htmlspecialchars($studyLabel) . "</p>"
+                    . "<p><strong>Message :</strong><br>" . nl2br(htmlspecialchars($message)) . "</p>"
+                    . "<p><strong>Date :</strong> " . date('d/m/Y H:i') . "</p>"
+                );
                 ajaxResponse(true, 'Votre demande a été envoyée avec succès. Nous vous répondrons sous 24h.');
                 break;
 
@@ -846,17 +891,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const newsletterForm = document.getElementById('newsletterForm');
     if (newsletterForm) {
+        let newsletterSubmitting = false;
         newsletterForm.addEventListener('submit', function(e) {
             e.preventDefault();
             e.stopPropagation();
+            if (newsletterSubmitting) return false;
+            newsletterSubmitting = true;
             const formData = new FormData(this);
             formData.append('ajax_action', 'newsletter');
             const msgEl = document.getElementById('newsletterMessage');
-            const btn = this.querySelector('button[type="submit"]');
-            const originalText = btn.innerHTML;
             if (newsletterTimeout) { clearTimeout(newsletterTimeout); newsletterTimeout = null; }
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Envoi...';
             msgEl.innerHTML = '';
             fetch(window.location.href, {
                 method: 'POST',
@@ -865,8 +909,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(response => { if (!response.ok) throw new Error('Erreur réseau: ' + response.status); return response.json(); })
             .then(data => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+                newsletterSubmitting = false;
                 if (data.success) {
                     msgEl.innerHTML = '<span style="color:#4ade80;">✅ ' + data.message + '</span>';
                     newsletterForm.reset();
@@ -876,8 +919,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 newsletterTimeout = setTimeout(() => { msgEl.innerHTML = ''; newsletterTimeout = null; }, 5000);
             })
             .catch(error => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+                newsletterSubmitting = false;
                 msgEl.innerHTML = '<span style="color:#f87171;">❌ ' + error.message + '</span>';
                 newsletterTimeout = setTimeout(() => { msgEl.innerHTML = ''; newsletterTimeout = null; }, 5000);
             });
@@ -887,17 +929,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const contactForm = document.getElementById('contactForm');
     if (contactForm) {
+        let contactSubmitting = false;
         contactForm.addEventListener('submit', function(e) {
             e.preventDefault();
             e.stopPropagation();
+            if (contactSubmitting) return false;
+            contactSubmitting = true;
             const formData = new FormData(this);
             formData.append('ajax_action', 'contact');
             const msgEl = document.getElementById('contactMessage');
-            const btn = this.querySelector('button[type="submit"]');
-            const originalText = btn.innerHTML;
             if (contactTimeout) { clearTimeout(contactTimeout); contactTimeout = null; }
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Envoi en cours...';
             msgEl.innerHTML = '';
             fetch(window.location.href, {
                 method: 'POST',
@@ -906,8 +947,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(response => { if (!response.ok) throw new Error('Erreur réseau: ' + response.status); return response.json(); })
             .then(data => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+                contactSubmitting = false;
                 if (data.success) {
                     msgEl.innerHTML = '<span style="color:#4ade80;">✅ ' + data.message + '</span>';
                     contactForm.reset();
@@ -917,8 +957,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 contactTimeout = setTimeout(() => { msgEl.innerHTML = ''; contactTimeout = null; }, 5000);
             })
             .catch(error => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+                contactSubmitting = false;
                 msgEl.innerHTML = '<span style="color:#f87171;">❌ ' + error.message + '</span>';
                 contactTimeout = setTimeout(() => { msgEl.innerHTML = ''; contactTimeout = null; }, 5000);
             });
