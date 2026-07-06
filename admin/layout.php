@@ -23,6 +23,12 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// ── Sécurité : layout.php est aussi atteignable directement via le routeur
+//    (?c=app&a=layout) — on vérifie donc l'authentification ici aussi,
+//    même si chaque page appelante le fait déjà normalement.
+require_once __DIR__ . '/../includes/auth.php';
+requireAuth();
+
 // ── Variables par défaut ────────────────────────────────────────────────────
 if (!isset($pageTitle))  $pageTitle  = 'Dashboard';
 if (!isset($pageIcon))   $pageIcon   = 'bi-speedometer2';
@@ -735,6 +741,7 @@ $menuItems = [
                                 </div>
                                 <?php endif; ?>
                                 <form method="POST" enctype="multipart/form-data">
+<?= csrf_field() ?>
                                     <div class="text-center mb-4">
                                         <?php if (!empty($profilAvatar)): ?>
                                         <img src="<?= BASE_URL ?>/uploads/images/<?= htmlspecialchars($profilAvatar) ?>" class="rounded-circle" style="width:80px;height:80px;object-fit:cover;">
@@ -773,6 +780,7 @@ $menuItems = [
                                 </div>
                                 <?php endif; ?>
                                 <form method="POST">
+<?= csrf_field() ?>
                                     <div class="mb-3">
                                         <label class="form-label">Ancien mot de passe *</label>
                                         <input type="password" name="old_password" class="form-control" required>

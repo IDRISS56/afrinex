@@ -13,7 +13,7 @@ requireAuth();
 define('BASE_ROUTE', 'users');
 
 // Seul un administrateur peut gérer les utilisateurs
-if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'isadmin') {
+if (!isAdmin()) {
     header('Location: dashboard');
     exit;
 }
@@ -69,10 +69,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_user'])) {
     if (empty($username)) $errors[] = "Le nom d'utilisateur est obligatoire";
     if (empty($email)) $errors[] = "L'email est obligatoire";
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = "Email invalide";
-    // Empêcher l'attribution du rôle isadmin via le formulaire
-    if ($role === 'isadmin') {
-        $errors[] = "Rôle non autorisé";
+    // Seul un superadmin peut attribuer le rôle superadmin
+    if ($role === 'isadmin' && !isSuperAdmin()) {
+        $errors[] = "Seul un superadmin peut attribuer ce rôle.";
         $role = 'author';
+    }
+
+    // Un admin (non-superadmin) ne peut pas modifier un compte superadmin existant
+    if ($editId && !isSuperAdmin()) {
+        $targetUser = $db->fetchOne("SELECT role FROM users WHERE id = ?", [$editId]);
+        if ($targetUser && $targetUser['role'] === 'isadmin') {
+            $errors[] = "Vous n'êtes pas autorisé à modifier ce compte.";
+        }
     }
 
     if (!$editId && empty($password)) {
@@ -147,6 +155,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user']) && iss
             header('Location: ' . BASE_ROUTE);
             exit;
         }
+        // Un admin (non-superadmin) ne peut pas supprimer un compte superadmin
+        if (!isSuperAdmin()) {
+            $targetUser = $db->fetchOne("SELECT role FROM users WHERE id = ?", [$id]);
+            if ($targetUser && $targetUser['role'] === 'isadmin') {
+                $_SESSION['flash_success'] = "Vous n'êtes pas autorisé à supprimer ce compte.";
+                header('Location: ' . BASE_ROUTE);
+                exit;
+            }
+        }
         $user = $db->fetchOne("SELECT avatar FROM users WHERE id = ?", [$id]);
         if ($user && $user['avatar']) {
             $imgPath = __DIR__ . '/../uploads/images/' . $user['avatar'];
@@ -170,7 +187,11 @@ $search = trim($_POST['search'] ?? $_GET['search'] ?? '');
 $roleFilter = trim($_POST['role'] ?? $_GET['role'] ?? '');
 $statusFilter = isset($_POST['is_active']) && $_POST['is_active'] !== '' ? (int)$_POST['is_active'] : (isset($_GET['is_active']) && $_GET['is_active'] !== '' ? (int)$_GET['is_active'] : null);
 
-$where = ["role != 'isadmin'"];
+$where = ["1=1"];
+// Un admin (non-superadmin) ne voit pas les comptes superadmin dans la liste
+if (!isSuperAdmin()) {
+    $where[] = "role != 'isadmin'";
+}
 $params = [];
 
 if ($search) {
@@ -298,6 +319,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="users">
                         <div class="col-md-4">
@@ -306,6 +328,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         <div class="col-md-3">
                             <select name="role" class="form-select">
                                 <option value="">Tous rôles</option>
+                                <?php if (isSuperAdmin()): ?>
+                                <option value="isadmin" <?= $roleFilter === 'isadmin' ? 'selected' : '' ?>>Superadmin</option>
+                                <?php endif; ?>
                                 <option value="admin" <?= $roleFilter === 'admin' ? 'selected' : '' ?>>Admin</option>
                                 <option value="editor" <?= $roleFilter === 'editor' ? 'selected' : '' ?>>Éditeur</option>
                                 <option value="author" <?= $roleFilter === 'author' ? 'selected' : '' ?>>Auteur</option>
@@ -358,7 +383,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 <td><?= htmlspecialchars($user['username']) ?></td>
                                 <td><?= htmlspecialchars($user['email']) ?></td>
                                 <td>
-                                    <span class="badge bg-<?= $user['role'] === 'admin' ? 'danger' : ($user['role'] === 'editor' ? 'info' : 'secondary') ?>">
+                                    <span class="badge bg-<?= $user['role'] === 'isadmin' ? 'dark' : ($user['role'] === 'admin' ? 'danger' : ($user['role'] === 'editor' ? 'info' : 'secondary')) ?>">
                                         <?= htmlspecialchars($user['role']) ?>
                                     </span>
                                 </td>
@@ -423,6 +448,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
                 <?php endif; ?>
                 <form method="POST" action="users" enctype="multipart/form-data" id="userForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="users">
                     <input type="hidden" name="save_user" value="1">
@@ -446,6 +472,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                     <div class="mb-3">
                         <label class="form-label">Rôle</label>
                         <select name="role" id="formRole" class="form-select">
+                            <?php if (isSuperAdmin()): ?>
+                            <option value="isadmin">Superadmin</option>
+                            <?php endif; ?>
                             <option value="admin">Admin</option>
                             <option value="editor">Éditeur</option>
                             <option value="author" selected>Auteur</option>
@@ -526,6 +555,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="users" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="users">
     <input type="hidden" name="delete_user" value="1">
@@ -534,6 +564,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="pageForm" method="POST" action="users" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="users">
     <input type="hidden" name="page" id="pageFormPage" value="">

@@ -12,6 +12,12 @@ requireAuth();
 
 define('BASE_ROUTE', 'partners_bi');
 
+// Seuls les rôles admin et editor peuvent gérer ce contenu
+if (!isEditor()) {
+    header('Location: dashboard');
+    exit;
+}
+
 // ═══════════════════════════════════════════════════════════
 // HELPER : envoyer du JSON propre
 // ═══════════════════════════════════════════════════════════
@@ -408,6 +414,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             </div>
             <div class="modal-body">
                 <form method="POST" action="partners_bi" enctype="multipart/form-data" id="partnerForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="partners_bi">
                     <input type="hidden" name="save_partner" value="1">
@@ -459,6 +466,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             </div>
             <div class="modal-body">
                 <form method="POST" action="partners_bi" id="biForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="partners_bi">
                     <input type="hidden" name="save_bi" value="1">
@@ -585,6 +593,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression (POST) -->
 <form id="deleteForm" method="POST" action="partners_bi" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="partners_bi">
     <input type="hidden" name="delete_type" id="deleteType" value="">

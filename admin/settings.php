@@ -12,8 +12,8 @@ requireAuth();
 
 define('BASE_ROUTE', 'settings');
 
-// Seul un administrateur peut modifier les paramètres
-if ($_SESSION['user_role'] !== 'isadmin') {
+// Seul le superadmin peut modifier les paramètres (même l'admin n'y a pas accès)
+if (!isSuperAdmin()) {
     header('Location: dashboard');
     exit;
 }
@@ -118,6 +118,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <!-- Formulaire -->
             <div class="table-card">
                 <form method="POST" action="settings" id="settingsForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="settings">
                     <input type="hidden" name="save_settings" value="1">

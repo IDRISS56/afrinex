@@ -31,14 +31,14 @@ function sendNotificationEmail($subject, $body) {
     try {
         $mail = new PHPMailer\PHPMailer\PHPMailer(true);
         $mail->isSMTP();
-        $mail->Host = 'smtp.gmail.com';
+        $mail->Host = env('MAIL_HOST', 'smtp.gmail.com');
         $mail->SMTPAuth = true;
-        $mail->Username = 'badrissaouattara565@gmail.com';
-        $mail->Password = 'yatw wpsw vvqn tkod';
+        $mail->Username = env('MAIL_USERNAME');
+        $mail->Password = env('MAIL_PASSWORD');
         $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port = 587;
-        $mail->setFrom('badrissaouattara565@gmail.com', 'AFRINEX Research');
-        $mail->addAddress('badrissaouattara565@gmail.com');
+        $mail->Port = (int)env('MAIL_PORT', 587);
+        $mail->setFrom(env('MAIL_USERNAME'), env('MAIL_FROM_NAME', 'AFRINEX Research'));
+        $mail->addAddress(env('MAIL_TO', env('MAIL_USERNAME')));
         $mail->isHTML(true);
         $mail->Subject = $subject;
         $mail->Body = nl2br($body);

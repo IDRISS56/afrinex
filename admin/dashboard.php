@@ -14,6 +14,10 @@ define('BASE_ROUTE', 'dashboard');
 
 $db = Database::getInstance();
 
+// Les "author" ne gèrent que leur propre contenu (widget rapide "Nouvel article")
+$restrictToOwn = !isEditor();
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+
 // ═══════════════════════════════════════════════════════════
 // HELPER : envoyer du JSON propre
 // ═══════════════════════════════════════════════════════════
@@ -33,6 +37,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_article' && isset($_GET['
         if ($id <= 0) throw new Exception('ID invalide');
         $article = $db->fetchOne("SELECT * FROM content WHERE id = ? AND type = 'article'", [$id]);
         if ($article) {
+            if ($restrictToOwn && (int)$article['user_id'] !== $currentUserId) {
+                jsonResponse(['success' => false, 'message' => "Vous n'êtes pas autorisé à consulter cet article."]);
+            }
             jsonResponse(['success' => true, 'data' => $article]);
         } else {
             jsonResponse(['success' => false, 'message' => 'Article introuvable']);
@@ -54,13 +61,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_article'])) {
     $content_body = trim($_POST['content'] ?? '');
     $category = $_POST['category'] ?? 'Data Story';
     $author = trim($_POST['author'] ?? 'Équipe AFRINEX');
-    $status = isset($_POST['is_published']) ? 'published' : 'draft';
+
+    // ── Authors: status is ALWAYS draft ──
+    // Editors: can choose via checkbox
+    $status = $restrictToOwn ? 'draft' : (isset($_POST['is_published']) ? 'published' : 'draft');
 
     // Gestion image
     $image = null;
     if ($editId) {
-        $existing = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'article'", [$editId]);
+        $existing = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'article'", [$editId]);
         $image = $existing['image'] ?? null;
+        if ($restrictToOwn && (!$existing || (int)$existing['user_id'] !== $currentUserId)) {
+            $errors[] = "Vous n'êtes pas autorisé à modifier cet article.";
+        }
+        // ── Authors cannot edit published articles ──
+        if ($restrictToOwn && $existing && $existing['status'] === 'published') {
+            $errors[] = "Vous ne pouvez pas modifier un article déjà publié.";
+        }
     }
     if (!empty($_FILES['image']['tmp_name'])) {
         try {
@@ -141,7 +158,7 @@ $donutData   = array_column($articlesByCategory, 'count') ?: [3, 2, 2];
 
 // Articles récents
 $recentArticles = $db->fetchAll("
-    SELECT id, title, category, status, date
+    SELECT id, title, category, status, date, user_id
     FROM content
     WHERE type = 'article'
     ORDER BY id DESC
@@ -477,7 +494,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                             </td>
                                         </tr>
                                         <?php else: ?>
-                                        <?php foreach ($recentArticles as $article): ?>
+                                        <?php foreach ($recentArticles as $article): 
+                                            $isAuthorRestricted = $restrictToOwn && $article['status'] === 'published';
+                                        ?>
                                         <tr>
                                             <td class="px-4">
                                                 <div style="max-width:220px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">
@@ -500,12 +519,16 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                                 <?php endif; ?>
                                             </td>
                                             <td class="text-end pe-4">
+                                                <?php if (!$isAuthorRestricted): ?>
                                                 <button type="button"
                                                         class="btn btn-sm btn-outline-primary btn-edit-article"
                                                         data-id="<?= $article['id'] ?>"
                                                         title="Modifier">
                                                     <i class="bi bi-pencil"></i>
                                                 </button>
+                                                <?php else: ?>
+                                                <span class="badge bg-secondary" title="Article publié — non modifiable">Verrouillé</span>
+                                                <?php endif; ?>
                                             </td>
                                         </tr>
                                         <?php endforeach; ?>
@@ -588,6 +611,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 <?php endif; ?>
 
                 <form method="POST" action="" enctype="multipart/form-data" id="articleForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="save_article" value="1">
                     <input type="hidden" name="edit_id" id="editId" value="">
 
@@ -627,6 +651,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         <div id="currentImage" class="mt-2"></div>
                     </div>
 
+                    <?php if (!$restrictToOwn): ?>
                     <div class="mb-3 form-check form-switch">
                         <input type="checkbox" name="is_published" class="form-check-input" id="formIsPublished" value="1" checked>
                         <label class="form-check-label" for="formIsPublished">
@@ -634,6 +659,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                             <small class="text-muted">(sinon enregistré comme brouillon)</small>
                         </label>
                     </div>
+                    <?php else: ?>
+                    <div class="alert alert-info d-flex align-items-center mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Votre article sera soumis en <strong>brouillon</strong> et examiné par un éditeur avant publication.</small>
+                    </div>
+                    <?php endif; ?>
 
                     <div class="d-flex gap-2 pt-1">
                         <button type="submit" class="btn btn-gold px-4" id="submitBtn">

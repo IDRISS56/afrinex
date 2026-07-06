@@ -12,6 +12,11 @@ requireAuth();
 
 define('BASE_ROUTE', 'services');
 
+// Tous les rôles connectés peuvent accéder à cette page ; les "author"
+// sont limités à leur propre contenu (cf. $restrictToOwn plus bas).
+$restrictToOwn = !isEditor();
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+
 if (!function_exists('formatDate')) {
     function formatDate($date): string {
         return date('d/m/Y', strtotime($date));
@@ -45,6 +50,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_service' && isset($_GET['
         if ($id <= 0) throw new Exception('ID invalide');
         $service = $db->fetchOne("SELECT * FROM content WHERE id = ? AND type = 'service'", [$id]);
         if ($service) {
+            if ($restrictToOwn && (int)$service['user_id'] !== $currentUserId) {
+                jsonResponse(['success' => false, 'message' => "Vous n'êtes pas autorisé à consulter ce service."]);
+            }
             $service['status_label'] = ($service['status'] === 'published') ? 'Publié' : 'Brouillon';
             $service['status_badge'] = ($service['status'] === 'published') ? 'badge-published' : 'badge-draft';
             $service['date_formatted'] = !empty($service['date']) ? date('d/m/Y', strtotime($service['date'])) : date('d/m/Y');
@@ -68,14 +76,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_service'])) {
     $slug = slugify($title);
     $content = trim($_POST['content'] ?? '');
     $icon = $_POST['icon'] ?? 'fas fa-chart-bar';
-    $status = isset($_POST['is_published']) ? 'published' : 'draft';
+
+    // ── Authors: status is ALWAYS draft ──
+    // Editors: can choose via checkbox
+    $status = $restrictToOwn ? 'draft' : (isset($_POST['is_published']) ? 'published' : 'draft');
     $sort_order = isset($_POST['sort_order']) ? (int)$_POST['sort_order'] : 0;
 
     // Gestion image
     $image = null;
     if ($editId) {
-        $existing = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'service'", [$editId]);
+        $existing = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'service'", [$editId]);
         $image = $existing['image'] ?? null;
+        if ($restrictToOwn && (!$existing || (int)$existing['user_id'] !== $currentUserId)) {
+            $errors[] = "Vous n'êtes pas autorisé à modifier ce service.";
+        }
+        // ── Authors cannot edit published services ──
+        if ($restrictToOwn && $existing && $existing['status'] === 'published') {
+            $errors[] = "Vous ne pouvez pas modifier un service déjà publié.";
+        }
     }
     if (!empty($_FILES['image']['tmp_name'])) {
         try {
@@ -116,16 +134,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_service'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_service']) && isset($_POST['delete_id'])) {
     $id = intval($_POST['delete_id']);
     if ($id > 0) {
-        $service = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'service'", [$id]);
-        if ($service && $service['image']) {
-            $imgPath = __DIR__ . '/../uploads/images/' . $service['image'];
-            if (file_exists($imgPath)) {
-                unlink($imgPath);
+        $service = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'service'", [$id]);
+        if ($service && (!$restrictToOwn || (int)$service['user_id'] === $currentUserId)) {
+            // ── Authors cannot delete published services ──
+            if ($restrictToOwn && $service['status'] === 'published') {
+                $_SESSION['flash_error'] = 'Vous ne pouvez pas supprimer un service déjà publié.';
+            } else {
+                if ($service['image']) {
+                    $imgPath = __DIR__ . '/../uploads/images/' . $service['image'];
+                    if (file_exists($imgPath)) {
+                        unlink($imgPath);
+                    }
+                }
+                $db->delete('content', 'id = ? AND type = ?', [$id, 'service']);
+                $_SESSION['flash_success'] = 'Service supprimé avec succès';
             }
+        } else {
+            $_SESSION['flash_error'] = "Vous n'êtes pas autorisé à supprimer ce service.";
         }
-        $db->delete('content', 'id = ? AND type = ?', [$id, 'service']);
     }
-    $_SESSION['flash_success'] = 'Service supprimé avec succès';
     header('Location: ' . BASE_ROUTE);
     exit;
 }
@@ -144,6 +171,10 @@ $status = trim($_POST['status'] ?? $_GET['status'] ?? '');
 $where = ["type = 'service'"];
 $params = [];
 
+if ($restrictToOwn) {
+    $where[] = "user_id = ?";
+    $params[] = $currentUserId;
+}
 if ($search) {
     $where[] = "(title LIKE ? OR content LIKE ?)";
     $params[] = "%$search%";
@@ -179,6 +210,11 @@ if (!empty($_SESSION['flash_success'])) {
     $success = true;
     $successMessage = $_SESSION['flash_success'];
     unset($_SESSION['flash_success']);
+}
+$flashError = '';
+if (!empty($_SESSION['flash_error'])) {
+    $flashError = $_SESSION['flash_error'];
+    unset($_SESSION['flash_error']);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -222,6 +258,8 @@ $extraStyles = <<<CSS
             font-size: 4rem;
             color: var(--gold);
         }
+        /* Author restrictions: disabled state for published items */
+        .btn-disabled-row { opacity:0.5; pointer-events:none; }
 CSS;
 
 // layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
@@ -244,6 +282,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+            <?php if ($flashError): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($flashError) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
 
             <?php if ($errors): ?>
             <div class="alert alert-danger alert-dismissible fade show" id="formErrors">
@@ -258,6 +302,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="services">
                         <div class="col-md-4">
@@ -308,7 +353,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 <td colspan="6" class="text-center py-4 text-muted">Aucun service trouvé</td>
                             </tr>
                             <?php else: ?>
-                            <?php foreach ($services as $service): ?>
+                            <?php foreach ($services as $service):
+                                $isAuthorRestricted = $restrictToOwn && $service['status'] === 'published';
+                            ?>
                             <tr>
                                 <td>
                                     <?php if ($service['image']): ?>
@@ -334,8 +381,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 </td>
                                 <td class="text-end" style="white-space: nowrap;">
                                     <button type="button" class="btn btn-sm btn-outline-secondary btn-view py-1 px-2" data-id="<?= $service['id'] ?>" title="Voir" style="font-size:0.75rem"><i class="bi bi-eye"></i></button>
+                                    <?php if (!$isAuthorRestricted): ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary btn-edit py-1 px-2" data-id="<?= $service['id'] ?>" title="Modifier" style="font-size:0.75rem"><i class="bi bi-pencil"></i></button>
                                     <button type="button" class="btn btn-sm btn-outline-danger btn-delete py-1 px-2" data-id="<?= $service['id'] ?>" title="Supprimer" style="font-size:0.75rem"><i class="bi bi-trash"></i></button>
+                                    <?php else: ?>
+                                    <span class="badge bg-secondary ms-1" title="Service publié — non modifiable">Verrouillé</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -383,6 +434,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
                 <?php endif; ?>
                 <form method="POST" action="services" enctype="multipart/form-data" id="serviceForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="services">
                     <input type="hidden" name="save_service" value="1">
@@ -422,10 +474,17 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         </div>
                     </div>
 
+                    <?php if (!$restrictToOwn): ?>
                     <div class="mb-3 form-check">
                         <input type="checkbox" name="is_published" class="form-check-input" id="formIsPublished" value="1" checked>
                         <label class="form-check-label" for="formIsPublished">Publier immédiatement</label>
                     </div>
+                    <?php else: ?>
+                    <div class="alert alert-info d-flex align-items-center mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Votre service sera soumis en <strong>brouillon</strong> et examiné par un éditeur avant publication.</small>
+                    </div>
+                    <?php endif; ?>
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary" id="submitBtn">Créer le service</button>
@@ -481,6 +540,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="services" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="services">
     <input type="hidden" name="delete_service" value="1">
@@ -489,6 +549,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="pageForm" method="POST" action="services" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="services">
     <input type="hidden" name="page" id="pageFormPage" value="">

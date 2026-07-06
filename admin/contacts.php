@@ -12,6 +12,12 @@ requireAuth();
 
 define('BASE_ROUTE', 'contacts');
 
+// Seuls les rôles admin et editor peuvent gérer ce contenu
+if (!isEditor()) {
+    header('Location: dashboard');
+    exit;
+}
+
 // ═══════════════════════════════════════════════════════════
 // HELPER : envoyer du JSON propre
 // ═══════════════════════════════════════════════════════════
@@ -176,6 +182,51 @@ $extraStyles = <<<CSS
             0%, 100% { transform: scale(1); opacity: 1; }
             50% { transform: scale(1.1); opacity: 0.8; }
         }
+
+        /* ─── FIX : Boutons restent dans le card ─── */
+        .contact-row .btn-group-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: nowrap;
+            flex-shrink: 0;
+        }
+        .contact-row .btn-group-actions .btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+            line-height: 1;
+            white-space: nowrap;
+        }
+        .contact-row .contact-main {
+            min-width: 0;
+            flex: 1;
+        }
+        .contact-row .contact-meta {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            flex-shrink: 0;
+        }
+        @media (max-width: 576px) {
+            .contact-row {
+                padding: 0.75rem;
+            }
+            .contact-row .contact-meta {
+                flex-direction: column;
+                align-items: flex-end;
+                gap: 0.5rem;
+                min-width: auto;
+            }
+            .contact-row .btn-group-actions {
+                gap: 0.2rem;
+            }
+            .contact-row .btn-group-actions .btn {
+                padding: 0.2rem 0.4rem;
+                font-size: 0.8rem;
+            }
+            .contact-row .contact-date {
+                font-size: 0.7rem;
+            }
+        }
 CSS;
 
 // layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
@@ -201,6 +252,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="contacts">
                         <div class="col-md-5">
@@ -236,16 +288,19 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <?php else: ?>
             <?php foreach ($contacts as $contact): ?>
             <div class="contact-row <?= empty($contact['is_read']) ? 'unread' : '' ?>" id="contact-<?= $contact['id'] ?>">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="flex-grow-1">
-                        <div class="d-flex align-items-center gap-2 mb-1">
-                            <div class="fw-medium"><?= htmlspecialchars(($contact['name'] ?? '') . ' ' . ($contact['firstname'] ?? '')) ?: 'Anonyme' ?></div>
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <!-- Partie gauche : infos -->
+                    <div class="contact-main min-w-0">
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <div class="fw-medium text-truncate" style="max-width: 100%;">
+                                <?= htmlspecialchars(($contact['name'] ?? '') . ' ' . ($contact['firstname'] ?? '')) ?: 'Anonyme' ?>
+                            </div>
                             <?php if (empty($contact['is_read'])): ?>
                             <span class="badge badge-unread" style="font-size:0.65rem">Nouveau</span>
                             <?php endif; ?>
                             <span class="badge bg-secondary" style="font-size:0.65rem"><?= htmlspecialchars($contact['type'] ?? 'message') ?></span>
                         </div>
-                        <div class="small text-muted mb-1">
+                        <div class="small text-muted mb-1 text-truncate">
                             <i class="bi bi-envelope"></i> <?= htmlspecialchars($contact['email']) ?>
                             <?php if ($contact['company']): ?>
                             <span class="mx-1">|</span><i class="bi bi-building"></i> <?= htmlspecialchars($contact['company']) ?>
@@ -260,9 +315,13 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         </div>
                         <?php endif; ?>
                     </div>
-                    <div class="text-end ms-3" style="min-width: 120px;">
-                        <small class="text-muted d-block mb-2"><?= date('d/m/Y H:i', strtotime($contact['date'])) ?></small>
-                        <div class="d-flex gap-1 justify-content-end">
+
+                    <!-- Partie droite : date + boutons -->
+                    <div class="contact-meta">
+                        <small class="text-muted contact-date d-block text-end" style="white-space:nowrap;">
+                            <?= date('d/m/Y H:i', strtotime($contact['date'])) ?>
+                        </small>
+                        <div class="btn-group-actions">
                             <?php if (empty($contact['is_read'])): ?>
                             <button type="button" class="btn btn-sm btn-outline-warning btn-mark-read" data-id="<?= $contact['id'] ?>" title="Marquer comme lu">
                                 <i class="bi bi-envelope-open"></i>
@@ -283,7 +342,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
             <!-- Pagination → POST -->
             <?php if ($totalPages > 1): ?>
-            <div class="d-flex justify-content-between align-items-center mt-3">
+            <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
                 <small class="text-muted">Affichage <?= (($page - 1) * $perPage) + 1 ?> – <?= min($page * $perPage, $total) ?> sur <?= $total ?></small>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
@@ -357,6 +416,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="contacts" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="contacts">
     <input type="hidden" name="delete_contact" value="1">
@@ -365,6 +425,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="pageForm" method="POST" action="contacts" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="contacts">
     <input type="hidden" name="page" id="pageFormPage" value="">
@@ -437,7 +498,7 @@ $(document).ready(function() {
         $.ajax({
             url: 'contacts',
             type: 'POST',
-            data: { mark_read: 1, id: id },
+            data: { mark_read: 1, id: id, csrf_token: '<?= csrf_token() ?>' },
             dataType: 'json',
             success: function(response) {
                 if (response.success) {

@@ -3,6 +3,23 @@
 //  Fonctions utilitaires centralisées
 // ============================================================
 
+if (!function_exists('env')) {
+    /**
+     * Lit une variable du fichier .env (à la racine du projet).
+     * Le fichier n'est lu qu'une seule fois par requête (cache statique).
+     *
+     * Usage : env('MAIL_USERNAME'), env('MAIL_PORT', 587)
+     */
+    function env(string $key, $default = null) {
+        static $env = null;
+        if ($env === null) {
+            $path = __DIR__ . '/../.env';
+            $env  = is_file($path) ? (parse_ini_file($path) ?: []) : [];
+        }
+        return $env[$key] ?? $default;
+    }
+}
+
 function getSetting($key, $default = '') {
     $row = Database::getInstance()->fetchOne("SELECT setting_value FROM settings WHERE setting_key = ?", [$key]);
     return $row ? $row['setting_value'] : $default;
@@ -94,14 +111,66 @@ function isMaintenance() {
 }
 
 if (!function_exists('uploadImage')) {
+    /**
+     * Upload sécurisé d'une image.
+     * - Vérifie le type MIME réel du fichier (magic bytes via finfo), jamais $_FILES[...]['type']
+     *   qui est fourni par le client et donc falsifiable.
+     * - Vérifie que le fichier est une image décodable (getimagesize).
+     * - Le nom de fichier stocké est généré côté serveur (jamais le nom d'origine).
+     *
+     * @throws Exception si le fichier est absent, trop volumineux, ou n'est pas une image autorisée.
+     */
     function uploadImage(array $file, string $subdir = 'images'): string {
-        $targetDir = __DIR__ . '/../uploads/images/';
-        if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
-        $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-        $filename = uniqid() . '.' . $ext;
-        if (!move_uploaded_file($file['tmp_name'], $targetDir . $filename)) {
-            throw new Exception('Erreur lors de l\'upload');
+        if (!isset($file['tmp_name'], $file['error']) || !is_uploaded_file($file['tmp_name'])) {
+            throw new Exception('Fichier invalide ou absent.');
         }
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception('Erreur lors de l\'upload (code ' . $file['error'] . ').');
+        }
+
+        // Taille maximale : 5 Mo
+        $maxSize = 5 * 1024 * 1024;
+        if (($file['size'] ?? 0) > $maxSize) {
+            throw new Exception('Le fichier dépasse la taille maximale autorisée (5 Mo).');
+        }
+
+        // Liste blanche : type MIME réel (vérifié via finfo) → extension de sortie
+        $allowedMimeToExt = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/gif'  => 'gif',
+            'image/webp' => 'webp',
+        ];
+
+        $finfo    = new finfo(FILEINFO_MIME_TYPE);
+        $realMime = $finfo->file($file['tmp_name']);
+
+        if ($realMime === false || !isset($allowedMimeToExt[$realMime])) {
+            throw new Exception('Format non autorisé. Formats acceptés : JPG, PNG, GIF, WEBP.');
+        }
+
+        // Vérification supplémentaire : le contenu doit être une image réellement décodable
+        // (empêche un fichier .php renommé avec un type MIME falsifié de passer le filtre)
+        $imageInfo = @getimagesize($file['tmp_name']);
+        if ($imageInfo === false) {
+            throw new Exception('Le fichier n\'est pas une image valide.');
+        }
+
+        $ext = $allowedMimeToExt[$realMime];
+
+        $subdir    = trim(str_replace(['..', '\\'], '', $subdir), '/');
+        $targetDir = __DIR__ . '/../uploads/' . ($subdir !== '' ? $subdir : 'images') . '/';
+        if (!is_dir($targetDir)) {
+            mkdir($targetDir, 0755, true);
+        }
+
+        // Nom de fichier généré côté serveur : jamais le nom d'origine (path traversal / double extension)
+        $filename = bin2hex(random_bytes(16)) . '.' . $ext;
+
+        if (!move_uploaded_file($file['tmp_name'], $targetDir . $filename)) {
+            throw new Exception('Erreur lors du déplacement du fichier.');
+        }
+
         return $filename;
     }
 }

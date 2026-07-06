@@ -12,6 +12,11 @@ requireAuth();
 
 define('BASE_ROUTE', 'articles');
 
+// Tous les rôles connectés peuvent accéder à cette page ; les "author"
+// sont limités à leur propre contenu (cf. $restrictToOwn plus bas).
+$restrictToOwn  = !isEditor();
+$currentUserId  = (int)($_SESSION['user_id'] ?? 0);
+
 // ═══════════════════════════════════════════════════════════
 // FONCTIONS UTILITAIRES  →  AVANT les blocs AJAX !
 // ═══════════════════════════════════════════════════════════
@@ -60,6 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         if (!$article) {
             jsonResponse(['success' => false, 'message' => 'Article introuvable']);
         }
+        if ($restrictToOwn && (int)$article['user_id'] !== $currentUserId) {
+            jsonResponse(['success' => false, 'message' => 'Vous n\'êtes pas autorisé à consulter cet article.']);
+        }
         
         $article['category_label']         = getCategoryLabel($article['category'] ?? '');
         $article['published_at_formatted'] = !empty($article['date']) ? date('d/m/Y', strtotime($article['date'])) : date('d/m/Y');
@@ -105,14 +113,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_article']) && isset($_POST['delete_id'])) {
     $id = intval($_POST['delete_id']);
     if ($id > 0) {
-        $art = $db->fetchOne("SELECT image FROM content WHERE id=? AND type='article'", [$id]);
-        if ($art && $art['image']) {
-            $imgPath = __DIR__ . '/../uploads/images/' . $art['image'];
-            if (file_exists($imgPath)) unlink($imgPath);
+        $art = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id=? AND type='article'", [$id]);
+        if ($art && (!$restrictToOwn || (int)$art['user_id'] === $currentUserId)) {
+            // ── Authors cannot delete published articles ──
+            if ($restrictToOwn && $art['status'] === 'published') {
+                $_SESSION['flash_error'] = 'Vous ne pouvez pas supprimer un article déjà publié.';
+            } else {
+                if ($art['image']) {
+                    $imgPath = __DIR__ . '/../uploads/images/' . $art['image'];
+                    if (file_exists($imgPath)) unlink($imgPath);
+                }
+                $db->delete('content', 'id=? AND type=?', [$id, 'article']);
+                $_SESSION['flash_success'] = 'Article supprimé avec succès';
+            }
+        } else {
+            $_SESSION['flash_error'] = 'Vous n\'êtes pas autorisé à supprimer cet article.';
         }
-        $db->delete('content', 'id=? AND type=?', [$id, 'article']);
     }
-    $_SESSION['flash_success'] = 'Article supprimé avec succès';
     header('Location: ' . BASE_ROUTE);
     exit;
 }
@@ -131,6 +148,10 @@ $status   = trim($_POST['status']   ?? $_GET['status']   ?? '');
 $where  = ["type = 'article'"];
 $params = [];
 
+if ($restrictToOwn) {
+    $where[]  = "user_id = ?";
+    $params[] = $currentUserId;
+}
 if ($search) {
     $where[]  = "(title LIKE ? OR excerpt LIKE ?)";
     $params[] = "%$search%";
@@ -157,6 +178,11 @@ if (!empty($_SESSION['flash_success'])) {
     $successMessage = $_SESSION['flash_success'];
     unset($_SESSION['flash_success']);
 }
+$flashError = '';
+if (!empty($_SESSION['flash_error'])) {
+    $flashError = $_SESSION['flash_error'];
+    unset($_SESSION['flash_error']);
+}
 
 // ═══════════════════════════════════════════════════════════
 // TRAITEMENT FORMULAIRE (CREATE/UPDATE)  →  POST
@@ -170,12 +196,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_article'])) {
     $content_body = trim($_POST['content'] ?? '');
     $category     = $_POST['category']     ?? 'data-story';
     $author       = trim($_POST['author']  ?? 'Équipe AFRINEX');
-    $status_val   = isset($_POST['is_published']) ? 'published' : 'draft';
+    
+    // ── Authors: status is ALWAYS draft ──
+    // Editors: can choose via checkbox
+    $status_val = $restrictToOwn ? 'draft' : (isset($_POST['is_published']) ? 'published' : 'draft');
 
     $image = null;
     if ($editId) {
-        $existing = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'article'", [$editId]);
+        $existing = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'article'", [$editId]);
         $image    = $existing['image'] ?? null;
+        if ($restrictToOwn && (!$existing || (int)$existing['user_id'] !== $currentUserId)) {
+            $errors[] = "Vous n'êtes pas autorisé à modifier cet article.";
+        }
+        // ── Authors cannot edit published articles ──
+        if ($restrictToOwn && $existing && $existing['status'] === 'published') {
+            $errors[] = "Vous ne pouvez pas modifier un article déjà publié.";
+        }
     }
     if (!empty($_FILES['image']['tmp_name'])) {
         try   { $image = uploadImage($_FILES['image'], 'images'); }
@@ -243,6 +279,8 @@ $extraStyles = <<<CSS
         #deleteConfirmModal i.bi-exclamation-triangle-fill { animation:pulse-warning 2s infinite; }
         @keyframes pulse-warning { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.1);opacity:.8} }
         #confirmDeleteBtn { min-width:120px; }
+        /* Author restrictions: disabled state for published items */
+        .btn-disabled-row { opacity:0.5; pointer-events:none; }
 CSS;
 
 // layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
@@ -265,11 +303,18 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+            <?php if ($flashError): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($flashError) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
 
             <!-- Filtres → POST -->
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="articles">
                         <div class="col-md-4">
@@ -315,7 +360,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                             <?php if (empty($articles)): ?>
                             <tr><td colspan="6" class="text-center py-4 text-muted">Aucun article trouvé</td></tr>
                             <?php else: ?>
-                            <?php foreach ($articles as $article): ?>
+                            <?php foreach ($articles as $article): 
+                                $isAuthorRestricted = $restrictToOwn && $article['status'] === 'published';
+                            ?>
                             <tr>
                                 <td>
                                     <?php if ($article['image']): ?>
@@ -351,6 +398,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                             data-id="<?= $article['id'] ?>" title="Voir" style="font-size:.75rem">
                                         <i class="bi bi-eye"></i>
                                     </button>
+                                    <?php if (!$isAuthorRestricted): ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary btn-edit py-1 px-2"
                                             data-id="<?= $article['id'] ?>" title="Modifier" style="font-size:.75rem">
                                         <i class="bi bi-pencil"></i>
@@ -360,6 +408,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                             title="Supprimer" style="font-size:.75rem">
                                         <i class="bi bi-trash"></i>
                                     </button>
+                                    <?php else: ?>
+                                    <span class="badge bg-secondary ms-1" title="Article publié — non modifiable">Verrouillé</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -419,6 +470,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 <?php endif; ?>
 
                 <form method="POST" action="articles" enctype="multipart/form-data" id="articleForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="articles">
                     <input type="hidden" name="save_article" value="1">
@@ -455,10 +507,17 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         <input type="file" name="image" class="form-control" accept="image/*">
                         <div id="currentImage" class="mt-2"></div>
                     </div>
+                    <?php if (!$restrictToOwn): ?>
                     <div class="mb-3 form-check">
                         <input type="checkbox" name="is_published" class="form-check-input" id="formIsPublished" value="1" checked>
                         <label class="form-check-label" for="formIsPublished">Publier immédiatement</label>
                     </div>
+                    <?php else: ?>
+                    <div class="alert alert-info d-flex align-items-center mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Votre article sera soumis en <strong>brouillon</strong> et examiné par un éditeur avant publication.</small>
+                    </div>
+                    <?php endif; ?>
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary" id="submitBtn">Créer l'article</button>
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
@@ -516,6 +575,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="articles" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="articles">
     <input type="hidden" name="delete_article" value="1">
@@ -524,6 +584,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="pageForm" method="POST" action="articles" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="articles">
     <input type="hidden" name="page" id="pageFormPage" value="">
@@ -678,7 +739,7 @@ $(document).ready(function () {
         $.ajax({
             url: 'articles',
             type: 'POST',
-            data: { c: 'app', a: 'articles', action: 'get_article', id: id },
+            data: { c: 'app', a: 'articles', action: 'get_article', id: id, csrf_token: '<?= csrf_token() ?>' },
             dataType: 'json',
             success: function (response) {
                 if (response.success && response.data) {
@@ -727,7 +788,7 @@ $(document).ready(function () {
         $.ajax({
             url: 'articles',
             type: 'POST',
-            data: { c: 'app', a: 'articles', action: 'get_article', id: id },
+            data: { c: 'app', a: 'articles', action: 'get_article', id: id, csrf_token: '<?= csrf_token() ?>' },
             dataType: 'json',
             success: function (response) {
                 if (response.success && response.data) {
@@ -835,6 +896,8 @@ $(document).ready(function () {
             fd.append('c', 'app');
             fd.append('a', 'articles');
             fd.append('action', 'upload_editor_image');
+
+            fd.append('csrf_token', '<?= csrf_token() ?>');
 
             $.ajax({
                 url: 'articles',

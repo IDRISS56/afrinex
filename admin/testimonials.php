@@ -12,6 +12,11 @@ requireAuth();
 
 define('BASE_ROUTE', 'testimonials');
 
+// Tous les rôles connectés peuvent accéder à cette page ; les "author"
+// sont limités à leur propre contenu (cf. $restrictToOwn plus bas).
+$restrictToOwn = !isEditor();
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+
 // ═══════════════════════════════════════════════════════════
 // FONCTIONS UTILITAIRES (définies AVANT usage)
 // ═══════════════════════════════════════════════════════════
@@ -64,6 +69,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_testimonial' && isset($_G
         if ($id <= 0) throw new Exception('ID invalide');
         $testimonial = $db->fetchOne("SELECT * FROM content WHERE id = ? AND type = 'temoignage'", [$id]);
         if ($testimonial) {
+            if ($restrictToOwn && (int)$testimonial['user_id'] !== $currentUserId) {
+                jsonResponse(['success' => false, 'message' => "Vous n'êtes pas autorisé à consulter ce témoignage."]);
+            }
             $testimonial['status_label'] = ($testimonial['status'] === 'published') ? 'Publié' : 'Brouillon';
             $testimonial['status_badge'] = ($testimonial['status'] === 'published') ? 'badge-published' : 'badge-draft';
             $testimonial['date_formatted'] = !empty($testimonial['date']) ? date('d/m/Y', strtotime($testimonial['date'])) : date('d/m/Y');
@@ -90,14 +98,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_testimonial'])) 
     $role = trim($_POST['role'] ?? '');
     $company = trim($_POST['company'] ?? '');
     $rating = isset($_POST['rating']) ? (int)$_POST['rating'] : 5;
-    $status = isset($_POST['is_published']) ? 'published' : 'draft';
     $sort_order = isset($_POST['sort_order']) ? (int)$_POST['sort_order'] : 0;
+
+    // ── Authors: status is ALWAYS draft ──
+    // Editors: can choose via checkbox
+    $status = $restrictToOwn ? 'draft' : (isset($_POST['is_published']) ? 'published' : 'draft');
 
     // Gestion image (avatar)
     $image = null;
     if ($editId) {
-        $existing = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'temoignage'", [$editId]);
+        $existing = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'temoignage'", [$editId]);
         $image = $existing['image'] ?? null;
+        if ($restrictToOwn && (!$existing || (int)$existing['user_id'] !== $currentUserId)) {
+            $errors[] = "Vous n'êtes pas autorisé à modifier ce témoignage.";
+        }
+        // ── Authors cannot edit published testimonials ──
+        if ($restrictToOwn && $existing && $existing['status'] === 'published') {
+            $errors[] = "Vous ne pouvez pas modifier un témoignage déjà publié.";
+        }
     }
     if (!empty($_FILES['image']['tmp_name'])) {
         try {
@@ -141,16 +159,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_testimonial'])) 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_testimonial']) && isset($_POST['delete_id'])) {
     $id = intval($_POST['delete_id']);
     if ($id > 0) {
-        $testimonial = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'temoignage'", [$id]);
-        if ($testimonial && $testimonial['image']) {
-            $imgPath = __DIR__ . '/../uploads/images/' . $testimonial['image'];
-            if (file_exists($imgPath)) {
-                unlink($imgPath);
+        $testimonial = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'temoignage'", [$id]);
+        if ($testimonial && (!$restrictToOwn || (int)$testimonial['user_id'] === $currentUserId)) {
+            // ── Authors cannot delete published testimonials ──
+            if ($restrictToOwn && $testimonial['status'] === 'published') {
+                $_SESSION['flash_error'] = 'Vous ne pouvez pas supprimer un témoignage déjà publié.';
+            } else {
+                if ($testimonial['image']) {
+                    $imgPath = __DIR__ . '/../uploads/images/' . $testimonial['image'];
+                    if (file_exists($imgPath)) {
+                        unlink($imgPath);
+                    }
+                }
+                $db->delete('content', 'id = ? AND type = ?', [$id, 'temoignage']);
+                $_SESSION['flash_success'] = 'Témoignage supprimé avec succès';
             }
+        } else {
+            $_SESSION['flash_error'] = "Vous n'êtes pas autorisé à supprimer ce témoignage.";
         }
-        $db->delete('content', 'id = ? AND type = ?', [$id, 'temoignage']);
     }
-    $_SESSION['flash_success'] = 'Témoignage supprimé avec succès';
     header('Location: ' . BASE_ROUTE);
     exit;
 }
@@ -168,6 +195,10 @@ $status = trim($_POST['status'] ?? $_GET['status'] ?? '');
 $where = ["type = 'temoignage'"];
 $params = [];
 
+if ($restrictToOwn) {
+    $where[] = "user_id = ?";
+    $params[] = $currentUserId;
+}
 if ($search) {
     $where[] = "(title LIKE ? OR content LIKE ? OR author LIKE ? OR role LIKE ?)";
     $params[] = "%$search%";
@@ -200,6 +231,11 @@ if (!empty($_SESSION['flash_success'])) {
     $success = true;
     $successMessage = $_SESSION['flash_success'];
     unset($_SESSION['flash_success']);
+}
+$flashError = '';
+if (!empty($_SESSION['flash_error'])) {
+    $flashError = $_SESSION['flash_error'];
+    unset($_SESSION['flash_error']);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -281,6 +317,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+            <?php if ($flashError): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($flashError) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
 
             <?php if ($errors): ?>
             <div class="alert alert-danger alert-dismissible fade show" id="formErrors">
@@ -295,6 +337,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="testimonials">
                         <div class="col-md-6">
@@ -334,7 +377,9 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 <td colspan="6" class="text-center py-4 text-muted">Aucun témoignage trouvé</td>
                             </tr>
                             <?php else: ?>
-                            <?php foreach ($testimonials as $t): ?>
+                            <?php foreach ($testimonials as $t): 
+                                $isAuthorRestricted = $restrictToOwn && $t['status'] === 'published';
+                            ?>
                             <tr>
                                 <td>
                                     <div class="d-flex align-items-center gap-2">
@@ -369,8 +414,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 </td>
                                 <td class="text-end" style="white-space: nowrap;">
                                     <button type="button" class="btn btn-sm btn-outline-secondary btn-view py-1 px-2" data-id="<?= $t['id'] ?>" title="Voir" style="font-size:0.75rem"><i class="bi bi-eye"></i></button>
+                                    <?php if (!$isAuthorRestricted): ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary btn-edit py-1 px-2" data-id="<?= $t['id'] ?>" title="Modifier" style="font-size:0.75rem"><i class="bi bi-pencil"></i></button>
                                     <button type="button" class="btn btn-sm btn-outline-danger btn-delete py-1 px-2" data-id="<?= $t['id'] ?>" title="Supprimer" style="font-size:0.75rem"><i class="bi bi-trash"></i></button>
+                                    <?php else: ?>
+                                    <span class="badge bg-secondary ms-1" title="Témoignage publié — non modifiable">Verrouillé</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -418,6 +467,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
                 <?php endif; ?>
                 <form method="POST" action="testimonials" enctype="multipart/form-data" id="testimonialForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="testimonials">
                     <input type="hidden" name="save_testimonial" value="1">
@@ -471,10 +521,17 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         <div id="currentImage" class="mt-2"></div>
                     </div>
 
+                    <?php if (!$restrictToOwn): ?>
                     <div class="mb-3 form-check">
                         <input type="checkbox" name="is_published" class="form-check-input" id="formIsPublished" value="1" checked>
                         <label class="form-check-label" for="formIsPublished">Publier immédiatement</label>
                     </div>
+                    <?php else: ?>
+                    <div class="alert alert-info d-flex align-items-center mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Votre témoignage sera soumis en <strong>brouillon</strong> et examiné par un éditeur avant publication.</small>
+                    </div>
+                    <?php endif; ?>
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary" id="submitBtn">Créer le témoignage</button>
@@ -534,6 +591,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="testimonials" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="testimonials">
     <input type="hidden" name="delete_testimonial" value="1">
@@ -542,6 +600,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="pageForm" method="POST" action="testimonials" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="testimonials">
     <input type="hidden" name="page" id="pageFormPage" value="">

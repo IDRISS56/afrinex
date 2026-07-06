@@ -12,6 +12,11 @@ requireAuth();
 
 define('BASE_ROUTE', 'contents');
 
+// Tous les rôles connectés peuvent accéder à cette page ; les "author"
+// sont limités à leur propre contenu (cf. $restrictToOwn plus bas).
+$restrictToOwn = !isEditor();
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+
 if (!function_exists('formatDate')) {
     function formatDate($date): string {
         return date('d/m/Y', strtotime($date));
@@ -45,6 +50,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_section' && isset($_GET['
         if ($id <= 0) throw new Exception('ID invalide');
         $section = $db->fetchOne("SELECT * FROM content WHERE id = ? AND type = 'section'", [$id]);
         if ($section) {
+            if ($restrictToOwn && (int)$section['user_id'] !== $currentUserId) {
+                jsonResponse(['success' => false, 'message' => "Vous n'êtes pas autorisé à consulter cette section."]);
+            }
             $section['status_label'] = ($section['status'] === 'published') ? 'Publié' : 'Brouillon';
             $section['status_badge'] = ($section['status'] === 'published') ? 'badge-published' : 'badge-draft';
             $section['date_formatted'] = !empty($section['date']) ? date('d/m/Y', strtotime($section['date'])) : date('d/m/Y');
@@ -102,14 +110,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_section'])) {
     $title = trim($_POST['title'] ?? '');
     $slug = slugify($title);
     $content = trim($_POST['content'] ?? '');
-    $status = isset($_POST['is_published']) ? 'published' : 'draft';
+
+    // ── Authors: status is ALWAYS draft ──
+    // Editors: can choose via checkbox
+    $status = $restrictToOwn ? 'draft' : (isset($_POST['is_published']) ? 'published' : 'draft');
     $sort_order = isset($_POST['sort_order']) ? (int)$_POST['sort_order'] : 0;
 
     // Gestion image de fond
     $image = null;
     if ($editId) {
-        $existing = $db->fetchOne("SELECT image FROM content WHERE id = ? AND type = 'section'", [$editId]);
+        $existing = $db->fetchOne("SELECT image, user_id, status FROM content WHERE id = ? AND type = 'section'", [$editId]);
         $image = $existing['image'] ?? null;
+        if ($restrictToOwn && (!$existing || (int)$existing['user_id'] !== $currentUserId)) {
+            $errors[] = "Vous n'êtes pas autorisé à modifier cette section.";
+        }
+        // ── Authors cannot edit published sections ──
+        if ($restrictToOwn && $existing && $existing['status'] === 'published') {
+            $errors[] = "Vous ne pouvez pas modifier une section déjà publiée.";
+        }
     }
     if (!empty($_FILES['image']['tmp_name'])) {
         try {
@@ -157,19 +175,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_section'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_section']) && isset($_POST['delete_id'])) {
     $id = intval($_POST['delete_id']);
     if ($id > 0) {
-        $section = $db->fetchOne("SELECT slug, image FROM content WHERE id = ? AND type = 'section'", [$id]);
-        if ($section) {
-            syncMenuDelete($db, $section['slug']);
-            if ($section['image']) {
-                $imgPath = __DIR__ . '/../uploads/images/' . $section['image'];
-                if (file_exists($imgPath)) {
-                    unlink($imgPath);
+        $section = $db->fetchOne("SELECT slug, image, user_id, status FROM content WHERE id = ? AND type = 'section'", [$id]);
+        if ($section && (!$restrictToOwn || (int)$section['user_id'] === $currentUserId)) {
+            // ── Authors cannot delete published sections ──
+            if ($restrictToOwn && $section['status'] === 'published') {
+                $_SESSION['flash_error'] = 'Vous ne pouvez pas supprimer une section déjà publiée.';
+            } else {
+                syncMenuDelete($db, $section['slug']);
+                if ($section['image']) {
+                    $imgPath = __DIR__ . '/../uploads/images/' . $section['image'];
+                    if (file_exists($imgPath)) {
+                        unlink($imgPath);
+                    }
                 }
+                $db->delete('content', 'id = ? AND type = ?', [$id, 'section']);
+                $_SESSION['flash_success'] = 'Section supprimée avec succès';
             }
+        } else {
+            $_SESSION['flash_error'] = "Vous n'êtes pas autorisé à supprimer cette section.";
         }
-        $db->delete('content', 'id = ? AND type = ?', [$id, 'section']);
     }
-    $_SESSION['flash_success'] = 'Section supprimée avec succès';
     header('Location: ' . BASE_ROUTE);
     exit;
 }
@@ -187,6 +212,10 @@ $status = trim($_POST['status'] ?? $_GET['status'] ?? '');
 $where = ["type = 'section'"];
 $params = [];
 
+if ($restrictToOwn) {
+    $where[] = "user_id = ?";
+    $params[] = $currentUserId;
+}
 if ($search) {
     $where[] = "(title LIKE ? OR slug LIKE ? OR content LIKE ?)";
     $params[] = "%$search%";
@@ -218,6 +247,11 @@ if (!empty($_SESSION['flash_success'])) {
     $success = true;
     $successMessage = $_SESSION['flash_success'];
     unset($_SESSION['flash_success']);
+}
+$flashError = '';
+if (!empty($_SESSION['flash_error'])) {
+    $flashError = $_SESSION['flash_error'];
+    unset($_SESSION['flash_error']);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -285,6 +319,8 @@ $extraStyles = <<<CSS
             font-size: 0.7rem;
             border: 1px solid #e1e4e8;
         }
+        /* Author restrictions: disabled state for published items */
+        .btn-disabled-row { opacity:0.5; pointer-events:none; }
 CSS;
 
 // layout.php ouvre : <html><head>...</head><body><div class="admin-layout">
@@ -304,6 +340,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <?php if ($success): ?>
             <div class="alert alert-success alert-dismissible fade show">
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($successMessage) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+            <?php if ($flashError): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($flashError) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
@@ -327,6 +369,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
             <div class="card mb-4">
                 <div class="card-body">
                     <form method="POST" class="row g-3 align-items-end" id="filterForm">
+<?= csrf_field() ?>
                         <input type="hidden" name="c" value="app">
                         <input type="hidden" name="a" value="contents">
                         <div class="col-md-6">
@@ -369,6 +412,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                             <?php else: ?>
                             <?php foreach ($sections as $section):
                                 $menuLink = $db->fetchOne("SELECT id, status FROM menus WHERE url = ? AND menu_location = 'main'", ['#' . ($section['slug'] ?? '')]);
+                                $isAuthorRestricted = $restrictToOwn && $section['status'] === 'published';
                             ?>
                             <tr>
                                 <td>
@@ -404,8 +448,12 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                                 </td>
                                 <td class="text-end" style="white-space: nowrap;">
                                     <button type="button" class="btn btn-sm btn-outline-secondary btn-view py-1 px-2" data-id="<?= $section['id'] ?>" title="Voir" style="font-size:0.75rem"><i class="bi bi-eye"></i></button>
+                                    <?php if (!$isAuthorRestricted): ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary btn-edit py-1 px-2" data-id="<?= $section['id'] ?>" title="Modifier" style="font-size:0.75rem"><i class="bi bi-pencil"></i></button>
                                     <button type="button" class="btn btn-sm btn-outline-danger btn-delete py-1 px-2" data-id="<?= $section['id'] ?>" title="Supprimer" style="font-size:0.75rem"><i class="bi bi-trash"></i></button>
+                                    <?php else: ?>
+                                    <span class="badge bg-secondary ms-1" title="Section publiée — non modifiable">Verrouillé</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -453,6 +501,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
                 <?php endif; ?>
                 <form method="POST" action="contents" enctype="multipart/form-data" id="sectionForm">
+<?= csrf_field() ?>
                     <input type="hidden" name="c" value="app">
                     <input type="hidden" name="a" value="contents">
                     <input type="hidden" name="save_section" value="1">
@@ -490,10 +539,17 @@ if (ob_get_level() > 0) { ob_end_flush(); }
                         <small>Le slug sera généré automatiquement à partir du titre et servira d'ancre (ex: <code>#mon-titre</code>).</small>
                     </div>
 
+                    <?php if (!$restrictToOwn): ?>
                     <div class="mb-3 form-check">
                         <input type="checkbox" name="is_published" class="form-check-input" id="formIsPublished" value="1" checked>
                         <label class="form-check-label" for="formIsPublished">Publier et ajouter au menu</label>
                     </div>
+                    <?php else: ?>
+                    <div class="alert alert-info d-flex align-items-center mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <small>Votre section sera soumise en <strong>brouillon</strong> et examinée par un éditeur avant publication.</small>
+                    </div>
+                    <?php endif; ?>
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary" id="submitBtn">Créer la section</button>
@@ -551,6 +607,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la suppression POST -->
 <form id="deleteForm" method="POST" action="contents" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="contents">
     <input type="hidden" name="delete_section" value="1">
@@ -559,6 +616,7 @@ if (ob_get_level() > 0) { ob_end_flush(); }
 
 <!-- Formulaire caché pour la pagination POST -->
 <form id="contentForm" method="POST" action="contents" style="display:none;">
+<?= csrf_field() ?>
     <input type="hidden" name="c" value="app">
     <input type="hidden" name="a" value="contents">
     <input type="hidden" name="content" id="contentFormcontent" value="">
